@@ -1,0 +1,47 @@
+# ==========================================
+# BACKEND .GITIGNORE - Taller Notas
+# ==========================================
+
+# Dependencias
+node_modules/
+package-lock.json.bak
+
+# Variables de entorno y secretos locales
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs y depuración
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Almacenamiento generado en tiempo de ejecución (PDFs y avatares de usuarios)
+storage/pdfs/*
+!storage/pdfs/.gitkeep
+storage/users/*
+!storage/users/.gitkeep
+
+# Pruebas y cobertura
+coverage/
+.nyc_output/
+
+# Sistema Operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores e IDEs
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
