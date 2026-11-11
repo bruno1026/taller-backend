@@ -8,7 +8,7 @@ import { enviarCorreoRecuperacion, enviarCorreoContacto } from '../utils/emailSe
 
 const generarToken = (usuario) => {
   return jwt.sign(
-    { id: usuario._id, nombre: usuario.nombre, taller: usuario.taller, rol: usuario.rol },
+    { id: usuario._id, nombre: usuario.nombre, correo: usuario.correo, taller: usuario.taller, rol: usuario.rol },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
   );

@@ -37,16 +37,30 @@ function getLabelDañoPDF(tipo) {
   return labels[tipo] || labels.otro;
 }
 
+export const MESES_ES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+];
+
+export const getYearMonthFromDate = (dateInput) => {
+  const d = dateInput ? new Date(dateInput) : new Date();
+  const validDate = isNaN(d.getTime()) ? new Date() : d;
+  const year = validDate.getFullYear().toString();
+  const monthName = MESES_ES[validDate.getMonth()];
+  return { year, monthName };
+};
+
 // === Generador reutilizable de PDF ===
 export const generateNotePDF = (nota, workshop) => {
   return new Promise((resolve, reject) => {
     try {
-      const pdfDir = path.join(process.cwd(), "storage", "pdfs");
+      const { year, monthName } = getYearMonthFromDate(nota.fecha || nota.createdAt);
+      const pdfDir = path.join(process.cwd(), "storage", "pdfs", year, monthName);
       if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
 
       const filename = `nota_${nota._id}.pdf`;
       const pdfFullPath = path.join(pdfDir, filename);
-      const relativePath = `/storage/pdfs/${filename}`;
+      const relativePath = `/storage/pdfs/${year}/${monthName}/${filename}`;
 
       const doc = new PDFDocument({ margin: 40 });
       const stream = fs.createWriteStream(pdfFullPath);
@@ -138,10 +152,72 @@ export const generateNotePDF = (nota, workshop) => {
         doc.restore();
       };
 
+      const drawSignatures = () => {
+        if (nota.incluirFirmas === false) return;
+
+        const signY = doc.page.height - 68;
+        const lineLength = 195;
+        const leftX = 40;
+        const rightX = doc.page.width - lineLength - 40;
+
+        doc.save();
+        doc.lineWidth(0.8).strokeColor("#374151");
+
+        // Línea Taller
+        doc.moveTo(leftX, signY).lineTo(leftX + lineLength, signY).stroke();
+
+        // Línea Cliente
+        doc.moveTo(rightX, signY).lineTo(rightX + lineLength, signY).stroke();
+        doc.restore();
+
+        // Textos Taller
+        doc.font("Helvetica-Bold")
+          .fontSize(7.5)
+          .fillColor("#000000")
+          .text(`SERVICIO RENAULT ${tallerUpper}`, leftX, signY + 5, {
+            width: lineLength,
+            align: "center",
+          });
+
+        doc.font("Helvetica")
+          .fontSize(6.5)
+          .fillColor("#4B5563")
+          .text("Firma y Sello del Taller", leftX, signY + 16, {
+            width: lineLength,
+            align: "center",
+          });
+
+        // Textos Cliente
+        const nombreCliente = (cliente.nombre || "Cliente").toUpperCase();
+        doc.font("Helvetica-Bold")
+          .fontSize(7.5)
+          .fillColor("#000000")
+          .text(nombreCliente, rightX, signY + 5, {
+            width: lineLength,
+            align: "center",
+          });
+
+        doc.font("Helvetica")
+          .fontSize(6.5)
+          .fillColor("#4B5563")
+          .text("Firma de Conformidad del Cliente", rightX, signY + 16, {
+            width: lineLength,
+            align: "center",
+          });
+      };
+
       // ===============================
-      //  PÁGINA 1: NOTA DE SERVICIO
+      //  PÁGINA 1: NOTA DE SERVICIO / GARANTÍA
       // ===============================
-      drawHeader("NOTA DE SERVICIO");
+      const tieneGarantiaActiva = Boolean(
+        nota.tieneGarantia ||
+        (nota.garantia &&
+         nota.garantia.trim() !== "" &&
+         !nota.garantia.toLowerCase().includes("sin garantia") &&
+         !nota.garantia.toLowerCase().includes("no especificada"))
+      );
+
+      drawHeader(tieneGarantiaActiva ? "GARANTÍA DEL SERVICIO" : "NOTA DE SERVICIO");
 
       // Barra visual de sección
       doc.save();
@@ -178,19 +254,32 @@ export const generateNotePDF = (nota, workshop) => {
         doc.moveDown(0.2);
       }
 
-      if (nota.garantia) {
-        const garantiaY = doc.y + 6;
+      // BANNER DESTACADO DE GARANTÍA (SI APLICA)
+      if (tieneGarantiaActiva) {
+        const bannerY = doc.y + 6;
+        const bannerHeight = 36;
+        const bannerWidth = doc.page.width - 80;
+        const bannerX = 40;
+
         doc.save();
-        doc.roundedRect(40, garantiaY, doc.page.width - 80, 26, 6).fillAndStroke("#FFF7CC", "#FBC02D");
+        doc.roundedRect(bannerX, bannerY, bannerWidth, bannerHeight, 8)
+          .fillAndStroke("#F5B400", "#18181B");
         doc.restore();
 
-        doc.font("Helvetica-Bold").fontSize(10).fillColor("#7A4B00")
-          .text(`GARANTÍA: ${nota.garantia || "—"}`, 50, garantiaY + 8, {
-            width: doc.page.width - 100,
-            align: "left",
+        const textoBase = (nota.garantia || `${nota.garantiaTiempo || 6} ${nota.garantiaUnidad || "MESES"}`).toUpperCase();
+        const textoBanner = textoBase.includes("GARANT")
+          ? textoBase
+          : `${textoBase} DE GARANTÍA`;
+
+        doc.font("Helvetica-Bold")
+          .fontSize(15)
+          .fillColor("#000000")
+          .text(textoBanner, bannerX, bannerY + 11, {
+            width: bannerWidth,
+            align: "center",
           });
 
-        doc.y = garantiaY + 34;
+        doc.y = bannerY + bannerHeight + 10;
       }
 
       // TABLA DE DETALLE DE SERVICIOS
@@ -276,6 +365,109 @@ export const generateNotePDF = (nota, workshop) => {
         .rect(margin, y, usableWidth, rowHeight)
         .stroke();
 
+      y += rowHeight;
+      doc.y = y;
+
+      // ==========================================
+      //  TÉRMINOS Y CONDICIONES DE GARANTÍA
+      // ==========================================
+      if (tieneGarantiaActiva) {
+        const termsMargin = margin;
+        const termsWidth = usableWidth;
+        const requiredHeight = 175;
+
+        // Si la tabla ocupó demasiado espacio, pasar términos a página limpia
+        if (doc.y + requiredHeight > doc.page.height - 85) {
+          drawSignatures();
+          drawFooter();
+          doc.addPage();
+          drawHeader("TÉRMINOS Y CONDICIONES DE GARANTÍA");
+        } else {
+          doc.moveDown(0.7);
+        }
+
+        const terminosTop = doc.y;
+
+        doc.font("Helvetica-Bold")
+          .fontSize(10)
+          .fillColor("#000000")
+          .text("Términos y condiciones de la garantía", termsMargin, terminosTop, {
+            align: "center",
+            width: termsWidth,
+          });
+
+        doc.moveDown(0.35);
+
+        doc.font("Helvetica")
+          .fontSize(8)
+          .fillColor("#18181B")
+          .text(
+            "Para que la garantía sea válida, el cliente deberá cumplir con los siguientes puntos. En caso contrario, la garantía quedará anulada. Asimismo, no se otorga garantía sobre trabajos realizados por terceros.",
+            termsMargin,
+            doc.y,
+            {
+              align: "justify",
+              width: termsWidth,
+              lineGap: 1.4,
+            }
+          );
+
+        doc.moveDown(0.4);
+
+        const puntosGarantia = [
+          {
+            punto: "Punto 1",
+            texto: "La garantía quedará sin efecto si cualquier persona ajena al taller interviene, repara o desarma la transmisión."
+          },
+          {
+            punto: "Punto 2",
+            texto: "La garantía no aplica en caso de que el daño haya sido ocasionado de forma deliberada o por uso indebido."
+          },
+          {
+            punto: "Punto 3",
+            texto: "En caso de presentarse alguna falla relacionada con la reparación, el vehículo deberá permanecer en nuestras instalaciones para su revisión y/o corrección. No se realizan servicios de garantía a domicilio."
+          },
+          {
+            punto: "Punto 4",
+            texto: "La garantía cubre únicamente la reparación del sistema hidráulico y de presión de la transmisión. No incluye fallas electrónicas ni de sensores."
+          },
+          {
+            punto: "Punto 5",
+            texto: "La garantía no cubre daños derivados de colisiones, impactos o ruptura de la caja de transmisión."
+          },
+          {
+            punto: "Punto 6",
+            texto: "La garantía no aplica en casos de daños ocasionados por inundación o ingreso de agua. Si la transmisión presenta indicios de haber sido expuesta a charcos o condiciones similares, la garantía quedará automáticamente anulada."
+          },
+          {
+            punto: "Punto 7",
+            texto: "La garantía no será válida si el vehículo es utilizado para fines distintos a los establecidos por el fabricante. En el caso de unidades diseñadas para transporte de pasajeros, no se cubren daños derivados del uso para carga o sobrepeso."
+          }
+        ];
+
+        puntosGarantia.forEach((item) => {
+          doc.font("Helvetica-Bold")
+            .fontSize(8)
+            .fillColor("#000000")
+            .text(`• ${item.punto}: `, termsMargin, doc.y, {
+              continued: true,
+              width: termsWidth,
+            });
+
+          doc.font("Helvetica")
+            .fontSize(8)
+            .fillColor("#111827")
+            .text(item.texto, {
+              width: termsWidth,
+              align: "justify",
+              lineGap: 1.2,
+            });
+
+          doc.moveDown(0.18);
+        });
+      }
+
+      drawSignatures();
       drawFooter();
 
       // ===============================
@@ -399,7 +591,18 @@ export const generateNotePDF = (nota, workshop) => {
 // === Crear una nueva nota y su PDF ===
 export const createNote = async (req, res) => {
   try {
-    const { taller, cliente, items, observaciones, garantia, daños = [] } = req.body;
+    const {
+      taller,
+      cliente,
+      items,
+      observaciones,
+      garantia,
+      tieneGarantia,
+      garantiaTiempo,
+      garantiaUnidad,
+      incluirFirmas,
+      daños = []
+    } = req.body;
 
     if (!taller || !cliente || !items || items.length === 0) {
       return res.status(400).json({ ok: false, msg: "Faltan datos requeridos" });
@@ -410,14 +613,26 @@ export const createNote = async (req, res) => {
       ? Number(req.body.total)
       : items.reduce((acc, item) => acc + (Number(item.cantidad) || 1) * (Number(item.precio) || 0), 0);
 
+    const creadoPor = {
+      usuarioId: req.usuario?.id || null,
+      nombre: req.usuario?.nombre || "Personal del Taller",
+      correo: req.usuario?.correo || "",
+      rol: req.usuario?.rol || "tecnico",
+    };
+
     const nuevaNota = new Note({
       taller,
       cliente,
       items,
       observaciones,
       garantia,
+      tieneGarantia: tieneGarantia !== undefined ? Boolean(tieneGarantia) : Boolean(garantia && !garantia.toLowerCase().includes("sin garantia")),
+      garantiaTiempo: Number(garantiaTiempo) || 0,
+      garantiaUnidad: garantiaUnidad || "meses",
+      incluirFirmas: incluirFirmas !== undefined ? Boolean(incluirFirmas) : true,
       total,
-      daños
+      daños,
+      creadoPor,
     });
 
     await nuevaNota.save();
@@ -427,7 +642,7 @@ export const createNote = async (req, res) => {
     nuevaNota.pdfPath = pdfResult.relativePath;
     await nuevaNota.save();
 
-    console.log(`✅ PDF generado: ${nuevaNota.pdfPath} | Nota: ${nuevaNota._id}`);
+    console.log(`[noteController] PDF generado: ${nuevaNota.pdfPath} | Nota: ${nuevaNota._id}`);
 
     res.status(201).json({
       ok: true,
@@ -437,7 +652,7 @@ export const createNote = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ Error en createNote:", error);
+    console.error("[noteController] Error en createNote:", error);
     res.status(500).json({ ok: false, msg: "Error al crear la nota", error: error.message });
   }
 };
@@ -445,6 +660,14 @@ export const createNote = async (req, res) => {
 // === Eliminar una nota ===
 export const deleteNote = async (req, res) => {
   try {
+    const esAdminOSuper = req.usuario && (req.usuario.rol === "superadmin" || req.usuario.rol === "admin");
+    if (!esAdminOSuper) {
+      return res.status(403).json({
+        ok: false,
+        msg: "Los técnicos no tienen permiso para eliminar notas. Solo los administradores pueden eliminarlas."
+      });
+    }
+
     const { id } = req.params;
 
     const nota = await Note.findById(id);
@@ -470,18 +693,160 @@ export const deleteNote = async (req, res) => {
     res.json({ ok: true, msg: "Nota eliminada correctamente" });
 
   } catch (error) {
-    console.error("❌ Error en deleteNote:", error);
+    console.error("Error en deleteNote:", error);
     res.status(500).json({ ok: false, msg: "Error al eliminar la nota", error: error.message });
   }
 };
 
-// === Obtener todas las notas ===
+// === Obtener una nota por ID para edición ===
+export const getNoteById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const nota = await Note.findById(id);
+    if (!nota) {
+      return res.status(404).json({ ok: false, msg: "Nota no encontrada" });
+    }
+    res.json({ ok: true, nota });
+  } catch (error) {
+    console.error("Error en getNoteById:", error);
+    res.status(500).json({ ok: false, msg: "Error al obtener la nota", error: error.message });
+  }
+};
+
+// === Actualizar una nota existente y regenerar su PDF ===
+export const updateNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      taller,
+      cliente,
+      items,
+      observaciones,
+      garantia,
+      tieneGarantia,
+      garantiaTiempo,
+      garantiaUnidad,
+      incluirFirmas,
+      daños = [],
+      total
+    } = req.body;
+
+    const nota = await Note.findById(id);
+    if (!nota) {
+      return res.status(404).json({ ok: false, msg: "Nota no encontrada" });
+    }
+
+    // Validación de permisos por rol: Los técnicos solo pueden editar sus propias notas
+    const esAdminOSuper = req.usuario && (req.usuario.rol === "superadmin" || req.usuario.rol === "admin");
+    if (!esAdminOSuper) {
+      const creadorId = nota.creadoPor?.usuarioId?.toString();
+      const creadorCorreo = (nota.creadoPor?.correo || "").toLowerCase();
+      const usuarioId = req.usuario?.id?.toString();
+      const usuarioCorreo = (req.usuario?.correo || "").toLowerCase();
+
+      const esDueño = (creadorId && creadorId === usuarioId) || (creadorCorreo && creadorCorreo === usuarioCorreo);
+      if (!esDueño) {
+        return res.status(403).json({
+          ok: false,
+          msg: "Solo tienes permiso para editar las notas que hayas generado tú mismo"
+        });
+      }
+    }
+
+    if (taller) nota.taller = taller;
+    if (cliente) nota.cliente = { ...nota.cliente, ...cliente };
+    if (items && Array.isArray(items)) nota.items = items;
+    if (observaciones !== undefined) nota.observaciones = observaciones;
+    if (garantia !== undefined) nota.garantia = garantia;
+    if (tieneGarantia !== undefined) nota.tieneGarantia = Boolean(tieneGarantia);
+    if (garantiaTiempo !== undefined) nota.garantiaTiempo = Number(garantiaTiempo);
+    if (garantiaUnidad !== undefined) nota.garantiaUnidad = garantiaUnidad;
+    if (incluirFirmas !== undefined) nota.incluirFirmas = Boolean(incluirFirmas);
+    if (Array.isArray(daños)) nota.daños = daños;
+
+    // Registrar trazabilidad de edición para Superadmin y Admin
+    nota.fueEditada = true;
+    nota.editadoPor = {
+      usuarioId: req.usuario?.id || null,
+      nombre: req.usuario?.nombre || "Personal del Taller",
+      correo: req.usuario?.correo || "",
+      rol: req.usuario?.rol || "tecnico",
+      fecha: new Date(),
+    };
+
+    if (!Array.isArray(nota.historialEdiciones)) {
+      nota.historialEdiciones = [];
+    }
+    nota.historialEdiciones.push({
+      usuarioId: req.usuario?.id || null,
+      nombre: req.usuario?.nombre || "Personal del Taller",
+      correo: req.usuario?.correo || "",
+      rol: req.usuario?.rol || "tecnico",
+      fecha: new Date(),
+    });
+
+    // Calcular o actualizar total
+    const totalCalculado = typeof total === "number" && !isNaN(total)
+      ? Number(total)
+      : (nota.items || []).reduce((acc, it) => acc + (Number(it.cantidad) || 1) * (Number(it.precio) || 0), 0);
+    nota.total = totalCalculado;
+
+    // Guardar ruta previa para limpiar si cambió de mes o ubicación
+    const oldPdfPath = nota.pdfPath ? path.join(process.cwd(), nota.pdfPath.replace(/^\/+/, "")) : null;
+
+    // Regenerar el PDF con los datos corregidos
+    const workshop = await Workshop.findOne({ nombre: nota.taller });
+    const pdfResult = await generateNotePDF(nota, workshop);
+    nota.pdfPath = pdfResult.relativePath;
+
+    // Si la ruta nueva difiere y la anterior existe, borrar el archivo anterior
+    if (oldPdfPath && path.resolve(oldPdfPath) !== path.resolve(pdfResult.fullPath) && fs.existsSync(oldPdfPath)) {
+      try {
+        fs.unlinkSync(oldPdfPath);
+      } catch (e) {
+        console.warn("No se pudo eliminar el archivo anterior:", e.message);
+      }
+    }
+
+    await nota.save();
+
+    console.log(`[OK] Nota ${nota._id} actualizada con éxito. Nuevo PDF: ${nota.pdfPath}`);
+
+    res.json({
+      ok: true,
+      msg: "Nota actualizada con éxito",
+      nota,
+      pdf: nota.pdfPath,
+    });
+  } catch (error) {
+    console.error("Error en updateNote:", error);
+    res.status(500).json({ ok: false, msg: "Error al actualizar la nota", error: error.message });
+  }
+};
+
+// === Obtener todas las notas con filtro por rol ===
 export const getNotes = async (req, res) => {
   try {
-    const notes = await Note.find().sort({ createdAt: -1 });
+    const esAdminOSuper = req.usuario && (req.usuario.rol === "superadmin" || req.usuario.rol === "admin");
+    let filtro = {};
+
+    if (!esAdminOSuper) {
+      // Si es técnico o empleado: SOLO ve las notas que él mismo generó
+      const uid = req.usuario?.id;
+      const ucorreo = (req.usuario?.correo || "").toLowerCase().trim();
+
+      filtro = {
+        $or: [
+          { "creadoPor.usuarioId": uid },
+          { "creadoPor.correo": ucorreo },
+        ],
+      };
+    }
+
+    const notes = await Note.find(filtro).sort({ createdAt: -1 });
     res.json(notes); 
   } catch (error) {
-    console.error("❌ Error en getNotes:", error);
+    console.error("Error en getNotes:", error);
     res.status(500).json({ ok: false, msg: "Error al obtener notas", error: error.message });
   }
 };
@@ -496,13 +861,31 @@ export const descargarPDF = async (req, res) => {
       return res.status(404).json({ ok: false, msg: "Nota no encontrada" });
     }
 
-    const pdfDir = path.join(process.cwd(), "storage", "pdfs");
+    const { year, monthName } = getYearMonthFromDate(nota.fecha || nota.createdAt);
+    const expectedDir = path.join(process.cwd(), "storage", "pdfs", year, monthName);
     const expectedFilename = `nota_${nota._id}.pdf`;
-    let pdfFullPath = path.join(pdfDir, expectedFilename);
+    let pdfFullPath = path.join(expectedDir, expectedFilename);
 
-    // Si el archivo no existe en disco, lo regeneramos automáticamente con los datos de Mongo
+    // 1. Probar ruta directa si nota.pdfPath ya está registrado
+    if (!fs.existsSync(pdfFullPath) && nota.pdfPath) {
+      const cleanRelative = nota.pdfPath.replace(/^\/+/, "");
+      const directPath = path.join(process.cwd(), cleanRelative);
+      if (fs.existsSync(directPath)) {
+        pdfFullPath = directPath;
+      }
+    }
+
+    // 2. Probar ruta plana legacy en storage/pdfs
     if (!fs.existsSync(pdfFullPath)) {
-      console.log(`⚠️ PDF físico no encontrado para nota ${nota._id}. Regenerando PDF al vuelo...`);
+      const flatPath = path.join(process.cwd(), "storage", "pdfs", expectedFilename);
+      if (fs.existsSync(flatPath)) {
+        pdfFullPath = flatPath;
+      }
+    }
+
+    // 3. Si no existe en disco, regenerar automáticamente en la estructura de año/mes
+    if (!fs.existsSync(pdfFullPath)) {
+      console.log(`[INFO] PDF físico no encontrado para nota ${nota._id}. Regenerando en ${year}/${monthName}...`);
       const workshop = await Workshop.findOne({ nombre: nota.taller });
       const result = await generateNotePDF(nota, workshop);
       pdfFullPath = result.fullPath;
@@ -524,11 +907,11 @@ export const descargarPDF = async (req, res) => {
     );
 
     const fileStream = fs.createReadStream(pdfFullPath);
-    console.log(`✅ Descarga de PDF: ${filename} | Nota: ${nota._id}`);
+    console.log(`[OK] Descarga de PDF: ${filename} | Nota: ${nota._id}`);
     fileStream.pipe(res);
 
   } catch (error) {
-    console.error("❌ Error en descargarPDF:", error);
+    console.error("Error en descargarPDF:", error);
     res.status(500).json({ ok: false, msg: "Error al descargar el PDF", error: error.message });
   }
 };

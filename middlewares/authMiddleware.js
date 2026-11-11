@@ -1,11 +1,17 @@
 import jwt from "jsonwebtoken";
 
 export const verificarToken = (req, res, next) => {
-  const token = req.headers["authorization"];
+  let token = req.headers["authorization"] || req.headers["x-access-token"] || req.query?.token;
   if (!token) return res.status(403).json({ ok: false, msg: "Token no proporcionado" });
 
+  if (typeof token === "string" && token.startsWith("Bearer ")) {
+    token = token.slice(7).trim();
+  } else if (typeof token === "string") {
+    token = token.trim();
+  }
+
   try {
-    const decoded = jwt.verify(token.replace("Bearer ", ""), process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.usuario = decoded;
     next();
   } catch (error) {
@@ -14,8 +20,14 @@ export const verificarToken = (req, res, next) => {
 };
 
 export const requireRole = (...roles) => (req, res, next) => {
-  if (!req.usuario || !roles.includes(req.usuario.rol)) {
+  if (!req.usuario) {
     return res.status(403).json({ ok: false, msg: "No autorizado" });
   }
-  next();
+
+  // Superadmin tiene acceso a todas las rutas protegidas
+  if (req.usuario.rol === "superadmin" || roles.includes(req.usuario.rol)) {
+    return next();
+  }
+
+  return res.status(403).json({ ok: false, msg: "No autorizado para este recurso" });
 };
