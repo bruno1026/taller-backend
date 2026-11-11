@@ -6,6 +6,9 @@
 node_modules/
 package-lock.json.bak
 
+# Compilacion del frontend monolitico generada en build
+public/
+
 # Variables de entorno y secretos locales
 .env
 .env.*

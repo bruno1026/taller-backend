@@ -5,7 +5,11 @@ const userSchema = new mongoose.Schema({
   nombre: { type: String, required: true },
   correo: { type: String, required: true, unique: true },
   contraseña: { type: String, required: true },
-  rol: { type: String, enum: ['admin', 'empleado'], default: 'empleado' },
+  rol: {
+    type: String,
+    enum: ['superadmin', 'admin', 'tecnico', 'empleado'],
+    default: 'tecnico'
+  },
   taller: { type: String, enum: ["Talisman", "Lutecia"], required: true },
   about: { type: String, default: "" }, // 👈 Nuevo campo
   imageUrl: { type: String, default: "" } // 👈 Nuevo campo

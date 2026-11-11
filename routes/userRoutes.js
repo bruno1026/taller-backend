@@ -10,9 +10,9 @@ import {
 
 const router = express.Router()
 
-router.get('/', verificarToken, requireRole('admin'), listarUsuarios)
-router.post('/', verificarToken, requireRole('admin'), upload.single('imagen'), crearUsuario)
-router.put('/:id', verificarToken, requireRole('admin'), upload.single('imagen'), actualizarUsuario)
-router.delete('/:id', verificarToken, requireRole('admin'), eliminarUsuario)
+router.get('/', verificarToken, requireRole('superadmin'), listarUsuarios)
+router.post('/', verificarToken, requireRole('superadmin'), upload.single('imagen'), crearUsuario)
+router.put('/:id', verificarToken, requireRole('superadmin'), upload.single('imagen'), actualizarUsuario)
+router.delete('/:id', verificarToken, requireRole('superadmin'), eliminarUsuario)
 
 export default router
