@@ -209,13 +209,26 @@ export const generateNotePDF = (nota, workshop) => {
       // ===============================
       //  PÁGINA 1: NOTA DE SERVICIO / GARANTÍA
       // ===============================
-      const tieneGarantiaActiva = Boolean(
-        nota.tieneGarantia ||
-        (nota.garantia &&
-         nota.garantia.trim() !== "" &&
-         !nota.garantia.toLowerCase().includes("sin garantia") &&
-         !nota.garantia.toLowerCase().includes("no especificada"))
-      );
+      const tieneGarantiaActiva = (() => {
+        if (typeof nota.tieneGarantia === "boolean") {
+          return nota.tieneGarantia;
+        }
+        if (!nota.garantia || typeof nota.garantia !== "string") {
+          return false;
+        }
+        const gNormal = nota.garantia
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim();
+        return (
+          gNormal !== "" &&
+          gNormal !== "sin garantia" &&
+          !gNormal.includes("sin garantia") &&
+          !gNormal.includes("no especificada") &&
+          gNormal !== "0"
+        );
+      })();
 
       drawHeader(tieneGarantiaActiva ? "GARANTÍA DEL SERVICIO" : "NOTA DE SERVICIO");
 
@@ -626,7 +639,13 @@ export const createNote = async (req, res) => {
       items,
       observaciones,
       garantia,
-      tieneGarantia: tieneGarantia !== undefined ? Boolean(tieneGarantia) : Boolean(garantia && !garantia.toLowerCase().includes("sin garantia")),
+      tieneGarantia: tieneGarantia !== undefined
+        ? Boolean(tieneGarantia)
+        : (() => {
+            if (!garantia || typeof garantia !== "string") return false;
+            const g = garantia.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            return g !== "" && !g.includes("sin garantia") && !g.includes("no especificada") && g !== "0";
+          })(),
       garantiaTiempo: Number(garantiaTiempo) || 0,
       garantiaUnidad: garantiaUnidad || "meses",
       incluirFirmas: incluirFirmas !== undefined ? Boolean(incluirFirmas) : true,
@@ -758,7 +777,12 @@ export const updateNote = async (req, res) => {
     if (items && Array.isArray(items)) nota.items = items;
     if (observaciones !== undefined) nota.observaciones = observaciones;
     if (garantia !== undefined) nota.garantia = garantia;
-    if (tieneGarantia !== undefined) nota.tieneGarantia = Boolean(tieneGarantia);
+    if (tieneGarantia !== undefined) {
+      nota.tieneGarantia = Boolean(tieneGarantia);
+    } else if (garantia !== undefined) {
+      const g = (garantia || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      nota.tieneGarantia = g !== "" && !g.includes("sin garantia") && !g.includes("no especificada") && g !== "0";
+    }
     if (garantiaTiempo !== undefined) nota.garantiaTiempo = Number(garantiaTiempo);
     if (garantiaUnidad !== undefined) nota.garantiaUnidad = garantiaUnidad;
     if (incluirFirmas !== undefined) nota.incluirFirmas = Boolean(incluirFirmas);
